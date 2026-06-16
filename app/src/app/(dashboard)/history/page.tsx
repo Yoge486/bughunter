@@ -88,7 +88,7 @@ export default function HistoryPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by URL..."
-          className="input-field pl-12"
+          className="input-field !pl-12"
           id="history-search"
         />
       </motion.div>

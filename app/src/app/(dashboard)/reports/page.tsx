@@ -12,6 +12,27 @@ import {
   Info
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { Doughnut, Bar } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+} from "chart.js";
+
+ChartJS.register(
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title
+);
 
 interface Vulnerability {
   id: string;
@@ -183,6 +204,78 @@ export default function ReportsPage() {
             <span className="text-sm font-medium">High Issues</span>
           </div>
           <p className="text-3xl font-bold">{severityCounts.high}</p>
+        </div>
+      </motion.div>
+
+      {/* Visual Charts */}
+      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Severity Doughnut */}
+        <div className="glass-card p-6">
+          <h2 className="text-lg font-semibold mb-4 text-white">Severity Breakdown</h2>
+          {vulnerabilities.length === 0 ? (
+            <div className="flex h-64 items-center justify-center text-text-muted">No data available</div>
+          ) : (
+            <div className="h-64 relative flex justify-center">
+              <Doughnut 
+                data={{
+                  labels: ["Critical", "High", "Medium", "Low", "Info"],
+                  datasets: [{
+                    data: [severityCounts.critical, severityCounts.high, severityCounts.medium, severityCounts.low, severityCounts.info],
+                    backgroundColor: ["#ff1744", "#ff6d00", "#ffc400", "#00e676", "#00bbf9"],
+                    borderWidth: 0,
+                    hoverOffset: 4
+                  }]
+                }} 
+                options={{
+                  maintainAspectRatio: false,
+                  cutout: "70%",
+                  plugins: {
+                    legend: { position: "right", labels: { color: "rgba(255,255,255,0.7)", padding: 20 } }
+                  }
+                }} 
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Categories Bar */}
+        <div className="glass-card p-6">
+          <h2 className="text-lg font-semibold mb-4 text-white">Top Categories</h2>
+          {vulnerabilities.length === 0 ? (
+            <div className="flex h-64 items-center justify-center text-text-muted">No data available</div>
+          ) : (
+            <div className="h-64 relative">
+              <Bar 
+                data={{
+                  labels: Object.entries(
+                    vulnerabilities.reduce((acc, v) => {
+                      acc[v.category] = (acc[v.category] || 0) + 1;
+                      return acc;
+                    }, {} as Record<string, number>)
+                  ).sort(([, a], [, b]) => b - a).slice(0, 5).map(([cat]) => cat.replace(/_/g, ' ')),
+                  datasets: [{
+                    label: "Issues Found",
+                    data: Object.entries(
+                      vulnerabilities.reduce((acc, v) => {
+                        acc[v.category] = (acc[v.category] || 0) + 1;
+                        return acc;
+                      }, {} as Record<string, number>)
+                    ).sort(([, a], [, b]) => b - a).slice(0, 5).map(([, count]) => count),
+                    backgroundColor: "#9b5de5",
+                    borderRadius: 4
+                  }]
+                }}
+                options={{
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    y: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { color: "rgba(255,255,255,0.5)", stepSize: 1 } },
+                    x: { grid: { display: false }, ticks: { color: "rgba(255,255,255,0.5)", maxRotation: 45, minRotation: 45 } }
+                  }
+                }}
+              />
+            </div>
+          )}
         </div>
       </motion.div>
 

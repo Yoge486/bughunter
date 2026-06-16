@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS scans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   target_url TEXT NOT NULL,
+  target_type TEXT DEFAULT 'url' CHECK (target_type IN ('url', 'github_repo')),
   security_score INTEGER CHECK (security_score >= 0 AND security_score <= 100),
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'scanning', 'completed', 'failed')),
   scan_duration_ms INTEGER,
@@ -62,11 +63,27 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
   name TEXT NOT NULL,
   description TEXT,
   severity TEXT CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')) NOT NULL,
-  category TEXT CHECK (category IN ('headers', 'ssl', 'xss', 'sqli', 'auth', 'config', 'cookies', 'info_exposure', 'other')),
+  category TEXT CHECK (category IN ('headers', 'ssl', 'xss', 'sqli', 'auth', 'config', 'cookies', 'info_exposure', 'sast', 'other')),
   ai_explanation TEXT,
   remediation TEXT,
   evidence JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================
+-- Scheduled Scans Table
+-- ============================================
+CREATE TABLE IF NOT EXISTS scheduled_scans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  target_url TEXT NOT NULL,
+  target_type TEXT DEFAULT 'url' CHECK (target_type IN ('url', 'github_repo')),
+  frequency TEXT CHECK (frequency IN ('daily', 'weekly')) NOT NULL,
+  last_run TIMESTAMPTZ,
+  next_run TIMESTAMPTZ NOT NULL,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================
@@ -117,6 +134,25 @@ CREATE POLICY "Users can insert vulnerabilities for own scans"
   WITH CHECK (
     scan_id IN (SELECT id FROM scans WHERE user_id = auth.uid())
   );
+
+-- Scheduled Scans RLS
+ALTER TABLE scheduled_scans ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own scheduled scans"
+  ON scheduled_scans FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own scheduled scans"
+  ON scheduled_scans FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own scheduled scans"
+  ON scheduled_scans FOR UPDATE
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own scheduled scans"
+  ON scheduled_scans FOR DELETE
+  USING (auth.uid() = user_id);
 
 -- ============================================
 -- Indexes for Performance

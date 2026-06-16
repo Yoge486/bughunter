@@ -96,8 +96,8 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="input-field pl-12"
+                  placeholder="Enter your email"
+                  className="input-field !pl-12"
                   required
                   id="login-email"
                 />
@@ -115,7 +115,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="input-field pl-12"
+                  className="input-field !pl-12"
                   required
                   id="login-password"
                 />

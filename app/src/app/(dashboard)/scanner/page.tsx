@@ -4,7 +4,6 @@ import { useState, useEffect, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Scan,
-  ExternalLink,
   Shield,
   AlertTriangle,
   CheckCircle,
@@ -14,9 +13,11 @@ import {
   ArrowRight,
   RefreshCw,
   Loader2,
+  Globe,
+  Github,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useSearchParams } from "next/navigation";
+import ChatAssistant from "@/components/ChatAssistant";
 
 interface Vulnerability {
   id?: string;
@@ -56,6 +57,7 @@ function ScannerContent() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState("");
   const [expandedVuln, setExpandedVuln] = useState<number | null>(null);
+  const [scanType, setScanType] = useState<"url" | "github">("url");
 
   const handleScan = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -66,15 +68,24 @@ function ScannerContent() {
     setResult(null);
     setProgress(0);
 
-    const steps = [
-      { p: 10, label: "Resolving DNS..." },
-      { p: 25, label: "Checking SSL/TLS..." },
-      { p: 40, label: "Analyzing security headers..." },
-      { p: 55, label: "Detecting technologies..." },
-      { p: 70, label: "Scanning for vulnerabilities..." },
-      { p: 85, label: "Running AI analysis..." },
-      { p: 95, label: "Generating report..." },
-    ];
+    const steps = scanType === "url" 
+      ? [
+          { p: 10, label: "Resolving DNS..." },
+          { p: 25, label: "Checking SSL/TLS..." },
+          { p: 40, label: "Analyzing security headers..." },
+          { p: 55, label: "Detecting technologies..." },
+          { p: 70, label: "Scanning for vulnerabilities..." },
+          { p: 85, label: "Running AI analysis..." },
+          { p: 95, label: "Generating report..." },
+        ]
+      : [
+          { p: 10, label: "Connecting to GitHub API..." },
+          { p: 30, label: "Fetching repository tree..." },
+          { p: 50, label: "Analyzing codebase files..." },
+          { p: 70, label: "Detecting hardcoded secrets & SAST..." },
+          { p: 85, label: "Running AI code review..." },
+          { p: 95, label: "Generating report..." },
+        ];
 
     // Animate progress
     for (const step of steps) {
@@ -84,7 +95,8 @@ function ScannerContent() {
     }
 
     try {
-      const response = await fetch("/api/scan", {
+      const endpoint = scanType === "url" ? "/api/scan" : "/api/scan/github";
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
@@ -127,21 +139,45 @@ function ScannerContent() {
       <div>
         <h1 className="text-3xl font-bold mb-2">Security Scanner</h1>
         <p className="text-text-secondary">
-          Enter a website URL to scan for vulnerabilities
+          Enter a website URL or GitHub repository to scan for vulnerabilities
         </p>
       </div>
 
-      {/* URL Input */}
+      {/* Target Type Tabs */}
+      <div className="flex items-center gap-2 bg-white/[0.02] p-1 rounded-xl w-fit border border-white/[0.05]">
+        <button
+          onClick={() => setScanType("url")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            scanType === "url" ? "bg-accent-cyan/10 text-accent-cyan" : "text-text-secondary hover:text-white hover:bg-white/5"
+          }`}
+        >
+          <Globe className="w-4 h-4" /> Website URL
+        </button>
+        <button
+          onClick={() => setScanType("github")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            scanType === "github" ? "bg-accent-purple/10 text-accent-purple" : "text-text-secondary hover:text-white hover:bg-white/5"
+          }`}
+        >
+          <Github className="w-4 h-4" /> GitHub Repository
+        </button>
+      </div>
+
+      {/* Target Input */}
       <form onSubmit={handleScan} className="glass-card p-6">
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="flex-1 relative">
-            <ExternalLink className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+            {scanType === "url" ? (
+              <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+            ) : (
+              <Github className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+            )}
             <input
               type="url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com"
-              className="input-field pl-12"
+              placeholder={scanType === "url" ? "Enter website URL" : "Enter GitHub repository URL"}
+              className="input-field !pl-12"
               required
               disabled={scanning}
               id="scan-url-input"
@@ -451,6 +487,10 @@ function ScannerContent() {
                 View Full Report <ArrowRight className="w-4 h-4" />
               </button>
             </div>
+
+            {result.id && (
+              <ChatAssistant scanId={result.id} targetUrl={result.target_url} />
+            )}
           </motion.div>
         )}
       </AnimatePresence>

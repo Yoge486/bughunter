@@ -15,12 +15,14 @@ import {
   X,
   ChevronDown,
   User,
+  Activity,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/scanner", label: "Scanner", icon: Scan },
+  { href: "/monitoring", label: "Monitoring", icon: Activity },
   { href: "/history", label: "Scan History", icon: History },
   { href: "/reports", label: "Reports", icon: FileText },
 ];
@@ -179,7 +181,18 @@ export default function DashboardLayout({
         </header>
 
         {/* Page Content */}
-        <div className="p-6 lg:p-8">{children}</div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={pathname}
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.3 }}
+            className="p-6 lg:p-8"
+          >
+            {children}
+          </motion.div>
+        </AnimatePresence>
       </main>
     </div>
   );

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface VulnerabilityResult {
   name: string;
@@ -128,6 +129,105 @@ function checkCookies(cookieHeader: string | null): VulnerabilityResult[] {
         });
       }
     }
+  }
+
+  return vulns;
+}
+
+// Active Directory/File Vulnerability Checks
+async function performDirectoryChecks(origin: string): Promise<VulnerabilityResult[]> {
+  const vulns: VulnerabilityResult[] = [];
+  const pathsToCheck = [
+    {
+      path: "/.env",
+      name: "Exposed Environment Configuration File (.env)",
+      severity: "critical" as const,
+      category: "info_exposure" as const,
+      description: "An exposed .env file was detected. This file typically contains database credentials, API keys, and other secrets.",
+      remediation: "Configure your web server to block access to files starting with a dot (.) or move secrets to server environment variables.",
+      ai_explanation: "An exposed .env file is a severe risk. Attackers can read credentials to database services, external APIs (like AWS or Stripe), and use them to compromise host infrastructure or user data.",
+      keyword: "DB_"
+    },
+    {
+      path: "/.git/config",
+      name: "Exposed Git Repository Configuration",
+      severity: "critical" as const,
+      category: "info_exposure" as const,
+      description: "The /.git/config file is accessible. This indicates the entire Git repository directory might be exposed to the public.",
+      remediation: "Block public access to the /.git directory in your web server configuration (Nginx/Apache/Cloudflare).",
+      ai_explanation: "If attackers can access /.git, they can download your entire source code history, revealing proprietary code, hardcoded credentials, and configuration files.",
+      keyword: "[core]"
+    },
+    {
+      path: "/admin",
+      name: "Exposed Admin Panel / Login Page",
+      severity: "low" as const,
+      category: "config" as const,
+      description: "A common admin login page was detected at /admin. Exposing administration pages increases the risk of brute-force attacks.",
+      remediation: "Restrict access to the admin panel using IP whitelisting, multi-factor authentication (MFA), or change the default path.",
+      ai_explanation: "Exposed admin endpoints allow attackers to attempt credential stuffing or brute-force attacks. Placing these endpoints behind a VPN, restricting them to specific IPs, or obfuscating the URL mitigates this risk.",
+      keyword: null
+    },
+    {
+      path: "/wp-admin",
+      name: "Exposed WordPress Admin Panel",
+      severity: "low" as const,
+      category: "config" as const,
+      description: "A WordPress admin login page was detected at /wp-admin. If the site is not WordPress, this could be a misconfiguration.",
+      remediation: "Secure the WordPress login screen using plugins like WPS Hide Login, limit login attempts, or restrict by IP.",
+      ai_explanation: "WordPress is a common target for automated brute-force bots. An exposed login screen makes it easy for attackers to test weak passwords.",
+      keyword: null
+    }
+  ];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const checkPromises = pathsToCheck.map(async (check) => {
+      try {
+        const url = `${origin}${check.path}`;
+        const res = await fetch(url, {
+          method: "GET",
+          signal: controller.signal,
+          headers: { "User-Agent": "BugHunter-AI-Scanner/1.0" }
+        });
+
+        if (res.status === 200) {
+          const text = await res.text();
+          let match = true;
+          if (check.keyword && !text.includes(check.keyword)) {
+            match = false;
+          }
+          if (check.path === "/admin" || check.path === "/wp-admin") {
+            const lowerText = text.toLowerCase();
+            if (!lowerText.includes("login") && !lowerText.includes("password") && !lowerText.includes("username") && !lowerText.includes("input")) {
+              match = false;
+            }
+          }
+
+          if (match) {
+            vulns.push({
+              name: check.name,
+              description: check.description,
+              severity: check.severity,
+              category: check.category,
+              remediation: check.remediation,
+              ai_explanation: check.ai_explanation,
+              evidence: { exposed_path: check.path, status: res.status }
+            });
+          }
+        }
+      } catch {
+        // Ignore single path failures
+      }
+    });
+
+    await Promise.allSettled(checkPromises);
+  } catch {
+    // Ignore overall errors
+  } finally {
+    clearTimeout(timeout);
   }
 
   return vulns;
@@ -279,6 +379,10 @@ export async function POST(request: NextRequest) {
       const cookieVulns = checkCookies(cookieHeader);
       vulnerabilities.push(...cookieVulns);
 
+      // Perform active directory/file checks
+      const activeVulns = await performDirectoryChecks(targetUrl.origin);
+      vulnerabilities.push(...activeVulns);
+
       // Check for information exposure
       if (responseHeaders["server"]) {
         vulnerabilities.push({
@@ -324,6 +428,81 @@ export async function POST(request: NextRequest) {
 
     // Detect technologies
     const technologies = detectTechnologies(responseHeaders, responseBody);
+
+    // Enhance with AI (Gemini)
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        
+        const prompt = `You are an expert cybersecurity analyst. A security scan was just performed on ${targetUrl.toString()}. 
+The following technologies were detected: ${technologies.length > 0 ? technologies.join(", ") : "None detected"}.
+The following response headers were found: ${JSON.stringify(responseHeaders)}.
+The following basic vulnerabilities were found:
+${vulnerabilities.map(v => `- ${v.name}: ${v.description}`).join("\n")}
+
+Please perform two actions:
+1. Provide a concise, customized AI explanation for each basic vulnerability specifically tailored to this site's context. Explain the impact, attack scenario, and security best practices.
+2. Analyze the detected technologies and response headers (like server versions or outdated frameworks) to infer any potential version-specific CVEs, outdated software risks, or other OWASP top 10 security risks (e.g. CSRF risk, XSS risk in framework). Limit new findings to a maximum of 3 highly likely risks.
+
+Format your response as a JSON object with the following structure:
+{
+  "enhancements": [
+    { "name": "Vulnerability Name", "ai_explanation": "Your detailed AI explanation here" }
+  ],
+  "new_vulnerabilities": [
+    {
+      "name": "Vulnerability or CVE Name",
+      "description": "Short description of the potential CVE or risk.",
+      "severity": "critical" | "high" | "medium" | "low" | "info",
+      "category": "xss" | "sqli" | "ssl" | "auth" | "config" | "info_exposure" | "other",
+      "remediation": "How to resolve this risk or upgrade.",
+      "ai_explanation": "Why this is a risk and the attack scenario.",
+      "evidence": { "detected_tech": "name of tech or header" }
+    }
+  ]
+}
+Only output the raw JSON object without any markdown formatting like \`\`\`json.`;
+
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text().trim();
+        
+        try {
+          const cleanJsonStr = responseText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+          const aiResponse = JSON.parse(cleanJsonStr);
+          
+          if (aiResponse.enhancements && Array.isArray(aiResponse.enhancements)) {
+            aiResponse.enhancements.forEach((aiVuln: { name: string, ai_explanation: string }) => {
+              const vuln = vulnerabilities.find(v => v.name === aiVuln.name);
+              if (vuln && aiVuln.ai_explanation) {
+                vuln.ai_explanation = aiVuln.ai_explanation;
+              }
+            });
+          }
+
+          if (aiResponse.new_vulnerabilities && Array.isArray(aiResponse.new_vulnerabilities)) {
+            aiResponse.new_vulnerabilities.forEach((newVuln: { name: string, description?: string, severity?: "critical" | "high" | "medium" | "low" | "info", category?: string, remediation?: string, ai_explanation?: string, evidence?: Record<string, unknown> }) => {
+              // Avoid duplicates
+              if (!vulnerabilities.some(v => v.name === newVuln.name)) {
+                vulnerabilities.push({
+                  name: newVuln.name,
+                  description: newVuln.description || "Potential vulnerability detected by AI analysis.",
+                  severity: newVuln.severity || "medium",
+                  category: newVuln.category || "other",
+                  remediation: newVuln.remediation || "Review the technology configuration and upgrade to the latest secure version.",
+                  ai_explanation: newVuln.ai_explanation || "",
+                  evidence: newVuln.evidence || {}
+                });
+              }
+            });
+          }
+        } catch (parseError) {
+          console.error("Failed to parse Gemini JSON:", responseText, parseError);
+        }
+      } catch (aiError) {
+        console.error("Gemini AI enhancement failed:", aiError);
+      }
+    }
 
     // Calculate score
     const securityScore = calculateScore(vulnerabilities);

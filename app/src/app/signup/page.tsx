@@ -130,8 +130,8 @@ export default function SignupPage() {
                   type="text"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="John Doe"
-                  className="input-field pl-12"
+                  placeholder="Enter your name"
+                  className="input-field !pl-12"
                   required
                   id="signup-name"
                 />
@@ -148,8 +148,8 @@ export default function SignupPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="input-field pl-12"
+                  placeholder="Enter your email"
+                  className="input-field !pl-12"
                   required
                   id="signup-email"
                 />
@@ -167,7 +167,7 @@ export default function SignupPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Min. 6 characters"
-                  className="input-field pl-12"
+                  className="input-field !pl-12"
                   required
                   minLength={6}
                   id="signup-password"

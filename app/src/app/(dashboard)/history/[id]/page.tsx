@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import ChatAssistant from "@/components/ChatAssistant";
+import { jsPDF } from "jspdf";
 
 interface Vulnerability {
   id: string;
@@ -112,6 +114,126 @@ export default function ScanDetailPage({ params }: { params: Promise<{ id: strin
     a.download = `bughunter-report-${scan.id.slice(0, 8)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const generatePDFReport = () => {
+    if (!scan) return;
+    const doc = new jsPDF();
+
+    // Theme colors
+    const primaryColor = [13, 21, 39]; // #0d1527 dark background
+
+    // Cover Title Block
+    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.rect(0, 0, 210, 45, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.text("BugHunter AI Scan Report", 15, 20);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(150, 150, 150);
+    doc.text(`Generated on ${new Date(scan.created_at).toLocaleString()}`, 15, 30);
+    doc.text(`Target URL: ${scan.target_url}`, 15, 36);
+
+    // Score Badge
+    const score = scan.security_score;
+    let scoreColor = [0, 230, 118]; // green
+    if (score < 90 && score >= 70) scoreColor = [255, 196, 0]; // yellow/amber
+    if (score < 70) scoreColor = [255, 23, 68]; // red
+
+    doc.setFillColor(scoreColor[0], scoreColor[1], scoreColor[2]);
+    doc.roundedRect(165, 12, 30, 20, 3, 3, "F");
+    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text(String(score), 180, 22, { align: "center" });
+    doc.setFontSize(8);
+    doc.text("SECURITY SCORE", 180, 28, { align: "center" });
+
+    // Section: Scan Information
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.text("Scan Summary", 15, 58);
+
+    doc.setDrawColor(230, 230, 230);
+    doc.line(15, 62, 195, 62);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Scan Duration: ${(scan.scan_duration_ms / 1000).toFixed(1)} seconds`, 15, 70);
+    doc.text(`Vulnerabilities Found: ${vulnerabilities.length}`, 15, 76);
+    doc.text(`Technologies Detected: ${scan.technologies ? scan.technologies.join(", ") : "None detected"}`, 15, 82);
+
+    // Section: Vulnerabilities Detail
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("Detailed Vulnerability Findings", 15, 96);
+    doc.line(15, 100, 195, 100);
+
+    let yPosition = 110;
+    const pageHeight = 297; // A4 height in mm
+
+    if (vulnerabilities.length === 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(100, 100, 100);
+      doc.text("No security vulnerabilities were identified on this website.", 15, yPosition);
+    } else {
+      vulnerabilities
+        .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
+        .forEach((vuln, index) => {
+          // Check if we need a new page
+          if (yPosition > pageHeight - 60) {
+            doc.addPage();
+            yPosition = 20;
+          }
+
+          // Severity Color Indicator
+          let sevColor = [0, 230, 118]; // green
+          if (vuln.severity === "critical" || vuln.severity === "high") sevColor = [255, 23, 68];
+          if (vuln.severity === "medium") sevColor = [255, 196, 0];
+
+          // Left border accent bar for vulnerability
+          doc.setFillColor(sevColor[0], sevColor[1], sevColor[2]);
+          doc.rect(15, yPosition, 2, 28, "F");
+
+          // Vulnerability header
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(11);
+          doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+          doc.text(`${index + 1}. ${vuln.name}`, 20, yPosition + 4);
+
+          // Severity badge on right
+          doc.setFillColor(sevColor[0], sevColor[1], sevColor[2]);
+          doc.roundedRect(165, yPosition, 30, 6, 1, 1, "F");
+          doc.setFontSize(8);
+          doc.setTextColor(255, 255, 255);
+          doc.text(vuln.severity.toUpperCase(), 180, yPosition + 4, { align: "center" });
+
+          // Description & Remediation text (with wrap)
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(9);
+          doc.setTextColor(80, 80, 80);
+          
+          const descLines = doc.splitTextToSize(`Description: ${vuln.description}`, 170);
+          const remediLines = doc.splitTextToSize(`Remediation: ${vuln.remediation}`, 170);
+          
+          doc.text(descLines, 20, yPosition + 11);
+          const descHeight = descLines.length * 4.5;
+          
+          doc.setTextColor(40, 120, 80);
+          doc.text(remediLines, 20, yPosition + 12 + descHeight);
+          const remediHeight = remediLines.length * 4.5;
+
+          yPosition += 16 + descHeight + remediHeight + 10;
+        });
+    }
+
+    doc.save(`bughunter-report-${scan.id.slice(0, 8)}.pdf`);
   };
 
   if (loading) {
@@ -241,10 +363,16 @@ export default function ScanDetailPage({ params }: { params: Promise<{ id: strin
       {/* Actions */}
       <div className="flex gap-3">
         <button
-          onClick={generateTextReport}
-          className="btn-primary flex items-center gap-2"
+          onClick={generatePDFReport}
+          className="btn-primary flex items-center gap-2 cursor-pointer"
         >
-          <Download className="w-4 h-4" /> Download Report
+          <Download className="w-4 h-4" /> Download PDF Report
+        </button>
+        <button
+          onClick={generateTextReport}
+          className="btn-secondary flex items-center gap-2 cursor-pointer"
+        >
+          <Download className="w-4 h-4" /> Download Text Report
         </button>
       </div>
 
@@ -346,6 +474,9 @@ export default function ScanDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         )}
       </div>
+      {scan && (
+        <ChatAssistant scanId={scan.id} targetUrl={scan.target_url} />
+      )}
     </motion.div>
   );
 }

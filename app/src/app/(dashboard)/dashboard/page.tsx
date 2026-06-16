@@ -15,6 +15,29 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+} from "chart.js";
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
@@ -50,6 +73,7 @@ function ScoreLabel(score: number | null) {
 
 export default function DashboardPage() {
   const [recentScans, setRecentScans] = useState<ScanRecord[]>([]);
+  const [historicalScans, setHistoricalScans] = useState<ScanRecord[]>([]);
   const [stats, setStats] = useState({
     totalScans: 0,
     avgScore: 0,
@@ -98,6 +122,19 @@ export default function DashboardPage() {
           reports: completedScans.length,
         });
       }
+
+      // Fetch historical scans for chart (last 10 completed scans)
+      const { data: chartData } = await supabase
+        .from("scans")
+        .select("*")
+        .eq("status", "completed")
+        .not("security_score", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      
+      if (chartData) {
+        setHistoricalScans([...chartData].reverse());
+      }
     };
 
     fetchDashboardData();
@@ -138,6 +175,61 @@ export default function DashboardPage() {
     },
   ];
 
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+    },
+    scales: {
+      y: {
+        min: 0,
+        max: 100,
+        grid: {
+          color: "rgba(255, 255, 255, 0.05)",
+        },
+        ticks: {
+          color: "rgba(255, 255, 255, 0.5)",
+        },
+      },
+      x: {
+        grid: {
+          display: false,
+        },
+        ticks: {
+          color: "rgba(255, 255, 255, 0.5)",
+        },
+      },
+    },
+  };
+
+  const lineChartData = {
+    labels: historicalScans.map((s) => {
+      try {
+        const urlObj = new URL(s.target_url);
+        return `${urlObj.hostname.slice(0, 15)} (${new Date(
+          s.created_at
+        ).toLocaleDateString(undefined, { month: "short", day: "numeric" })})`;
+      } catch {
+        return `${s.target_url.slice(0, 15)} (${new Date(
+          s.created_at
+        ).toLocaleDateString(undefined, { month: "short", day: "numeric" })})`;
+      }
+    }),
+    datasets: [
+      {
+        fill: true,
+        label: "Security Score",
+        data: historicalScans.map((s) => s.security_score || 0),
+        borderColor: "#00f5d4",
+        backgroundColor: "rgba(0, 245, 212, 0.05)",
+        tension: 0.4,
+      },
+    ],
+  };
+
   return (
     <motion.div
       initial="initial"
@@ -165,15 +257,15 @@ export default function DashboardPage() {
               type="url"
               value={quickUrl}
               onChange={(e) => setQuickUrl(e.target.value)}
-              placeholder="Enter website URL to scan (e.g., https://example.com)"
-              className="input-field pl-12"
+              placeholder="Enter website URL to scan"
+              className="input-field !pl-12"
               required
               id="quick-scan-url"
             />
           </div>
           <button
             type="submit"
-            className="btn-primary flex items-center gap-2 whitespace-nowrap"
+            className="btn-primary flex items-center gap-2 whitespace-nowrap cursor-pointer"
             id="quick-scan-btn"
           >
             <Scan className="w-4 h-4" /> Quick Scan
@@ -204,6 +296,16 @@ export default function DashboardPage() {
           </div>
         ))}
       </motion.div>
+
+      {/* Trend Chart */}
+      {historicalScans.length > 1 && (
+        <motion.div variants={fadeUp} className="glass-card p-6">
+          <h2 className="text-lg font-semibold mb-4 text-white">Security Score Trend</h2>
+          <div className="h-64 w-full relative">
+            <Line data={lineChartData} options={chartOptions} />
+          </div>
+        </motion.div>
+      )}
 
       {/* Recent Scans */}
       <motion.div variants={fadeUp} className="glass-card overflow-hidden">

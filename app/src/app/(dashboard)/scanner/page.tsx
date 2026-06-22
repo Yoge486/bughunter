@@ -175,7 +175,15 @@ function ScannerContent() {
             <input
               type="url"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setUrl(val);
+                if (scanType === "url" && val.includes("github.com/")) {
+                  setScanType("github");
+                } else if (scanType === "github" && (val.startsWith("http://") || val.startsWith("https://")) && !val.includes("github.com")) {
+                  setScanType("url");
+                }
+              }}
               placeholder={scanType === "url" ? "Enter website URL" : "Enter GitHub repository URL"}
               className="input-field !pl-12"
               required

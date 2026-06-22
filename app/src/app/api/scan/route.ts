@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { lookup } from "dns/promises";
 
 interface VulnerabilityResult {
@@ -486,80 +485,96 @@ export async function POST(request: NextRequest) {
     // Detect technologies
     const technologies = detectTechnologies(responseHeaders, responseBody);
 
-    // Enhance with AI (Gemini)
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        
-        const prompt = `You are an expert cybersecurity analyst. A security scan was just performed on ${targetUrl.toString()}. 
-The following technologies were detected: ${technologies.length > 0 ? technologies.join(", ") : "None detected"}.
-The following response headers were found: ${JSON.stringify(responseHeaders)}.
-The following basic vulnerabilities were found:
-${vulnerabilities.map(v => `- ${v.name}: ${v.description}`).join("\n")}
-
-Please perform two actions:
-1. Provide a concise, customized AI explanation for each basic vulnerability specifically tailored to this site's context. Explain the impact, attack scenario, and security best practices.
-2. Analyze the detected technologies and response headers (like server versions or outdated frameworks) to infer any potential version-specific CVEs, outdated software risks, or other OWASP top 10 security risks (e.g. CSRF risk, XSS risk in framework). Limit new findings to a maximum of 3 highly likely risks.
-
-Format your response as a JSON object with the following structure:
-{
-  "enhancements": [
-    { "name": "Vulnerability Name", "ai_explanation": "Your detailed AI explanation here" }
-  ],
-  "new_vulnerabilities": [
-    {
-      "name": "Vulnerability or CVE Name",
-      "description": "Short description of the potential CVE or risk.",
-      "severity": "critical" | "high" | "medium" | "low" | "info",
-      "category": "xss" | "sqli" | "ssl" | "auth" | "config" | "info_exposure" | "other",
-      "remediation": "How to resolve this risk or upgrade.",
-      "ai_explanation": "Why this is a risk and the attack scenario.",
-      "evidence": { "detected_tech": "name of tech or header" }
-    }
-  ]
-}
-Only output the raw JSON object without any markdown formatting like \`\`\`json.`;
-
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text().trim();
-        
-        try {
-          const cleanJsonStr = responseText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-          const aiResponse = JSON.parse(cleanJsonStr);
-          
-          if (aiResponse.enhancements && Array.isArray(aiResponse.enhancements)) {
-            aiResponse.enhancements.forEach((aiVuln: { name: string, ai_explanation: string }) => {
-              const vuln = vulnerabilities.find(v => v.name === aiVuln.name);
-              if (vuln && aiVuln.ai_explanation) {
-                vuln.ai_explanation = aiVuln.ai_explanation;
-              }
-            });
-          }
-
-          if (aiResponse.new_vulnerabilities && Array.isArray(aiResponse.new_vulnerabilities)) {
-            aiResponse.new_vulnerabilities.forEach((newVuln: { name: string, description?: string, severity?: "critical" | "high" | "medium" | "low" | "info", category?: string, remediation?: string, ai_explanation?: string, evidence?: Record<string, unknown> }) => {
-              // Avoid duplicates
-              if (!vulnerabilities.some(v => v.name === newVuln.name)) {
-                vulnerabilities.push({
-                  name: newVuln.name,
-                  description: newVuln.description || "Potential vulnerability detected by AI analysis.",
-                  severity: newVuln.severity || "medium",
-                  category: newVuln.category || "other",
-                  remediation: newVuln.remediation || "Review the technology configuration and upgrade to the latest secure version.",
-                  ai_explanation: newVuln.ai_explanation || "",
-                  evidence: newVuln.evidence || {}
-                });
-              }
-            });
-          }
-        } catch (parseError) {
-          console.error("Failed to parse Gemini JSON:", responseText, parseError);
-        }
-      } catch (aiError) {
-        console.error("Gemini AI enhancement failed:", aiError);
-      }
-    }
+    // Enhance with AI (Claude)
+    if (process.env.ANTHROPIC_API_KEY) {
+       try {
+         const prompt = `You are an expert cybersecurity analyst. A security scan was just performed on ${targetUrl.toString()}. 
+ The following technologies were detected: ${technologies.length > 0 ? technologies.join(", ") : "None detected"}.
+ The following response headers were found: ${JSON.stringify(responseHeaders)}.
+ The following basic vulnerabilities were found:
+ ${vulnerabilities.map(v => `- ${v.name}: ${v.description}`).join("\n")}
+ 
+ Please perform two actions:
+ 1. Provide a concise, customized AI explanation for each basic vulnerability specifically tailored to this site's context. Explain the impact, attack scenario, and security best practices.
+ 2. Analyze the detected technologies and response headers (like server versions or outdated frameworks) to infer any potential version-specific CVEs, outdated software risks, or other OWASP top 10 security risks (e.g. CSRF risk, XSS risk in framework). Limit new findings to a maximum of 3 highly likely risks.
+ 
+ Format your response as a JSON object with the following structure:
+ {
+   "enhancements": [
+     { "name": "Vulnerability Name", "ai_explanation": "Your detailed AI explanation here" }
+   ],
+   "new_vulnerabilities": [
+     {
+       "name": "Vulnerability or CVE Name",
+       "description": "Short description of the potential CVE or risk.",
+       "severity": "critical" | "high" | "medium" | "low" | "info",
+       "category": "xss" | "sqli" | "ssl" | "auth" | "config" | "info_exposure" | "other",
+       "remediation": "How to resolve this risk or upgrade.",
+       "ai_explanation": "Why this is a risk and the attack scenario.",
+       "evidence": { "detected_tech": "name of tech or header" }
+     }
+   ]
+ }
+ Only output the raw JSON object without any markdown formatting like \`\`\`json.`;
+ 
+         const response = await fetch("https://api.anthropic.com/v1/messages", {
+           method: "POST",
+           headers: {
+             "x-api-key": process.env.ANTHROPIC_API_KEY,
+             "anthropic-version": "2023-06-01",
+             "content-type": "application/json",
+           },
+           body: JSON.stringify({
+             model: "claude-3-5-sonnet-20241022",
+             max_tokens: 4000,
+             messages: [{ role: "user", content: prompt }],
+           }),
+         });
+ 
+         if (!response.ok) {
+           const errorText = await response.text();
+           throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+         }
+ 
+         const responseData = await response.json();
+         const responseText = responseData.content[0].text.trim();
+         
+         try {
+           const cleanJsonStr = responseText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+           const aiResponse = JSON.parse(cleanJsonStr);
+           
+           if (aiResponse.enhancements && Array.isArray(aiResponse.enhancements)) {
+             aiResponse.enhancements.forEach((aiVuln: { name: string, ai_explanation: string }) => {
+               const vuln = vulnerabilities.find(v => v.name === aiVuln.name);
+               if (vuln && aiVuln.ai_explanation) {
+                 vuln.ai_explanation = aiVuln.ai_explanation;
+               }
+             });
+           }
+ 
+           if (aiResponse.new_vulnerabilities && Array.isArray(aiResponse.new_vulnerabilities)) {
+             aiResponse.new_vulnerabilities.forEach((newVuln: { name: string, description?: string, severity?: "critical" | "high" | "medium" | "low" | "info", category?: string, remediation?: string, ai_explanation?: string, evidence?: Record<string, unknown> }) => {
+               // Avoid duplicates
+               if (!vulnerabilities.some(v => v.name === newVuln.name)) {
+                 vulnerabilities.push({
+                   name: newVuln.name,
+                   description: newVuln.description || "Potential vulnerability detected by AI analysis.",
+                   severity: newVuln.severity || "medium",
+                   category: newVuln.category || "other",
+                   remediation: newVuln.remediation || "Review the technology configuration and upgrade to the latest secure version.",
+                   ai_explanation: newVuln.ai_explanation || "",
+                   evidence: newVuln.evidence || {}
+                 });
+               }
+             });
+           }
+         } catch (parseError) {
+           console.error("Failed to parse Claude JSON:", responseText, parseError);
+         }
+       } catch (aiError) {
+         console.error("Claude AI enhancement failed:", aiError);
+       }
+     }
 
     // Calculate score
     const securityScore = calculateScore(vulnerabilities);

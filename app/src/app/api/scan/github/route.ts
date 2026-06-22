@@ -1,8 +1,34 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+async function callClaude(prompt: string): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("ANTHROPIC_API_KEY is not configured");
+  }
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 4000,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+  }
+
+  const responseData = await response.json();
+  return responseData.content[0].text;
+}
 
 function scanForSecrets(content: string, filePath: string) {
   const secrets = [];
@@ -142,7 +168,6 @@ export async function POST(req: Request) {
 
     // Run AI Analysis concurrently
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       const aiPromises = [];
 
       if (scaContent.trim()) {
@@ -167,7 +192,7 @@ export async function POST(req: Request) {
           CODE:
           ${scaContent}
         `;
-        aiPromises.push(model.generateContent(scaPrompt));
+        aiPromises.push(callClaude(scaPrompt));
       }
 
       for (const chunk of sourceChunks) {
@@ -193,14 +218,14 @@ export async function POST(req: Request) {
           CODEBASE TO ANALYZE:
           ${chunk}
         `;
-        aiPromises.push(model.generateContent(sastPrompt));
+        aiPromises.push(callClaude(sastPrompt));
       }
 
       const results = await Promise.allSettled(aiPromises);
 
       for (const res of results) {
         if (res.status === "fulfilled") {
-          let responseText = res.value.response.text();
+          let responseText = res.value;
           responseText = responseText.replace(/^```json\s*/, "").replace(/\s*```$/, "").trim();
           try {
             const aiVulns = JSON.parse(responseText);
@@ -213,7 +238,7 @@ export async function POST(req: Request) {
         }
       }
     } catch (aiErr) {
-      console.error("AI Analysis failed:", aiErr);
+      console.error("Claude AI Analysis failed:", aiErr);
     }
 
     // Attach scan_id and deduct score

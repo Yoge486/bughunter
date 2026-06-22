@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,9 +12,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.GEMINI_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json(
-        { error: "Gemini API key is not configured on the server." },
+        { error: "Anthropic API key is not configured on the server." },
         { status: 500 }
       );
     }
@@ -63,31 +62,104 @@ Your goal:
 3. Be professional, direct, and technical, but keep it accessible for developers.
 4. If asked about things unrelated to this website's security, guide the user back to the vulnerabilities and securing their platform.`;
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      systemInstruction: systemInstruction,
+    // Format history safely for Anthropic: must start with user, alternate roles, and have non-empty content
+    const formattedHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    for (const h of history) {
+      const role = h.role === "assistant" ? "assistant" : "user";
+      const content = h.content || h.text || "";
+      if (!content.trim()) continue;
+
+      if (formattedHistory.length === 0) {
+        if (role === "user") {
+          formattedHistory.push({ role, content });
+        }
+      } else {
+        const last = formattedHistory[formattedHistory.length - 1];
+        if (last.role === role) {
+          last.content += "\n" + content;
+        } else {
+          formattedHistory.push({ role, content });
+        }
+      }
+    }
+
+    const messages: Array<{ role: "user" | "assistant"; content: string }> = [...formattedHistory];
+    if (messages.length > 0 && messages[messages.length - 1].role === "user") {
+      messages[messages.length - 1].content += "\n" + message;
+    } else {
+      messages.push({ role: "user", content: message });
+    }
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4000,
+        system: systemInstruction,
+        messages: messages,
+        stream: true,
+      }),
     });
 
-    // Clean up history formats to ensure compatibility with Gemini SDK
-    const formattedHistory = history.map((h: { role?: string; content?: string; text?: string; parts?: unknown[] }) => ({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: Array.isArray(h.parts) ? h.parts : [{ text: h.content || h.text || "" }]
-    }));
+    if (!response.ok) {
+      const errorText = await response.text();
+      return NextResponse.json(
+        { error: `Anthropic API error: ${response.status} - ${errorText}` },
+        { status: 500 }
+      );
+    }
 
-    const chat = model.startChat({
-      history: formattedHistory,
-    });
-
-    const result = await chat.sendMessageStream(message);
-
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
     const encoder = new TextEncoder();
+
     const stream = new ReadableStream({
       async start(controller) {
+        if (!reader) {
+          controller.close();
+          return;
+        }
+
+        let buffer = "";
         try {
-          for await (const chunk of result.stream) {
-            const chunkText = chunk.text();
-            controller.enqueue(encoder.encode(chunkText));
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              if (trimmed.startsWith("data: ")) {
+                const dataStr = trimmed.slice(6);
+                if (dataStr === "[DONE]") continue;
+                try {
+                  const data = JSON.parse(dataStr);
+                  if (data.type === "content_block_delta" && data.delta?.text) {
+                    controller.enqueue(encoder.encode(data.delta.text));
+                  }
+                } catch {
+                  // Ignore JSON parse errors for incomplete lines
+                }
+              }
+            }
+          }
+          if (buffer.trim().startsWith("data: ")) {
+            const dataStr = buffer.trim().slice(6);
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.type === "content_block_delta" && data.delta?.text) {
+                controller.enqueue(encoder.encode(data.delta.text));
+              }
+            } catch {}
           }
         } catch (e) {
           controller.error(e);
